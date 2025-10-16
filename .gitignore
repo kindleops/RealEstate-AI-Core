@@ -1,0 +1,31 @@
+# Ignore everything by default
+*
+
+# But keep these files/folders
+!.gitignore
+!README.md
+!main.py
+!agents/
+!agents/**
+
+!api/
+!api/**
+
+!config/
+!config/**
+
+!data/
+!data/**
+
+!utils/
+!utils/**
+
+# Ignore macOS and editor cruft
+.DS_Store
+.Trash/
+*.icloud
+.vscode/
+.idea/
+node_modules/
+__pycache__/
+*.pyc
