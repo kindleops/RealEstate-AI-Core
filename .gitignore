@@ -19,6 +19,7 @@
 
 !utils/
 !utils/**
+!logger.py
 
 # Ignore macOS and editor cruft
 .DS_Store
