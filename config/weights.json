@@ -1,0 +1,20 @@
+{
+  "weights": {
+    "not_sold_24_months": 15,
+    "high_equity": 10,
+    "cash_sales": 15,
+    "vacant": 10,
+    "absentee_owner": 10,
+    "flip_activity": 15,
+    "margin": 20
+  },
+  "thresholds": {
+    "recent_sale_months": 24,
+    "equity_percent": 0.4,
+    "cash_sales_minimum": 15,
+    "flip_activity_minimum": 15,
+    "margin_ratio": 0.3,
+    "high_priority_cutoff": 70,
+    "medium_priority_cutoff": 40
+  }
+}
