@@ -20,6 +20,12 @@
 !utils/
 !utils/**
 
+!tests/
+!tests/**
+
+!fastapi/
+!fastapi/**
+
 # Ignore macOS and editor cruft
 .DS_Store
 .Trash/
