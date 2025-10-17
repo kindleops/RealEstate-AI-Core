@@ -1,4 +1,8 @@
 {
+  "motivation": 0.35,
+  "equity": 0.25,
+  "timeline": 0.2,
+  "communication": 0.2
   "inbound_leads": {
     "base_score": 55,
     "urgency_weight": 6,
