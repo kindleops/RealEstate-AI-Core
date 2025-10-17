@@ -21,6 +21,12 @@
 !utils/**
 !logger.py
 
+!tests/
+!tests/**
+
+!fastapi/
+!fastapi/**
+
 # Ignore macOS and editor cruft
 .DS_Store
 .Trash/
