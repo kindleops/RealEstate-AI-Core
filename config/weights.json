@@ -1,0 +1,27 @@
+{
+  "base_score": 0,
+  "motivation_thresholds": {
+    "high": 75,
+    "medium": 45
+  },
+  "fields": {
+    "vacant": 30,
+    "tax_delinquent": 20,
+    "preforeclosure": 25,
+    "equity_percentage": {
+      "thresholds": [
+        {"min": 50, "score": 20},
+        {"min": 30, "score": 10}
+      ]
+    },
+    "absentee_owner": 10,
+    "recent_communication": {
+      "thresholds": [
+        {"max_days": 7, "score": 15},
+        {"max_days": 30, "score": 5}
+      ]
+    },
+    "tax_lien": 15,
+    "code_violation": 10
+  }
+}
