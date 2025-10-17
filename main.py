@@ -1,5 +1,6 @@
 """FastAPI application wiring agent endpoints together."""
 
+"""Entry point for the FastAPI application."""
 from __future__ import annotations
 
 from fastapi import FastAPI
@@ -34,3 +35,12 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+from api.routes import router as agent_router
+
+app = FastAPI(title="Real Estate AI Core")
+app.include_router(agent_router)
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
