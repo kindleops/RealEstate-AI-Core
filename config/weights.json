@@ -1,4 +1,79 @@
 {
+  "motivation": 0.35,
+  "equity": 0.25,
+  "timeline": 0.2,
+  "communication": 0.2
+  "inbound_leads": {
+    "base_score": 55,
+    "urgency_weight": 6,
+    "motivation_weight": 5,
+    "response_bonus": 12,
+    "stale_penalty": 1.5
+  },
+  "tax_lien": {
+    "severity_weight": 0.02,
+    "status_multipliers": {
+      "active": 1.0,
+      "judgment": 1.4,
+      "released": 0.4
+    },
+    "flag_threshold": 40
+  },
+  "vacancy": {
+    "usps_weight": 0.6,
+    "third_party_weight": 0.3,
+    "days_empty_weight": 0.1,
+    "vacant_threshold": 55
+  },
+  "multifamily": {
+    "noi_weight": 45,
+    "cap_rate_weight": 35,
+    "comps_weight": 20,
+    "max_score": 100
+  },
+  "creative_finance": {
+    "equity_weight": 35,
+    "motivation_weight": 30,
+    "cashflow_weight": 20,
+    "timeline_weight": 15
+  },
+  "cash_offer": {
+    "arv_discount": 0.7,
+    "repair_buffer": 1.15,
+    "min_margin": 0.1,
+    "max_margin": 0.18
+  },
+  "skiptrace_quality": {
+    "max_score": 100,
+    "bad_phone_penalty": 25,
+    "bounce_penalty": 15,
+    "response_bonus": 20
+  },
+  "repair_cost": {
+    "base_per_sqft": 18,
+    "condition_adjustments": {
+      "light": 0.85,
+      "medium": 1.0,
+      "heavy": 1.45
+    },
+    "contingency_default": 0.1
+  "weights": {
+    "not_sold_24_months": 15,
+    "high_equity": 10,
+    "cash_sales": 15,
+    "vacant": 10,
+    "absentee_owner": 10,
+    "flip_activity": 15,
+    "margin": 20
+  },
+  "thresholds": {
+    "recent_sale_months": 24,
+    "equity_percent": 0.4,
+    "cash_sales_minimum": 15,
+    "flip_activity_minimum": 15,
+    "margin_ratio": 0.3,
+    "high_priority_cutoff": 70,
+    "medium_priority_cutoff": 40
   "base_score": 0,
   "motivation_thresholds": {
     "high": 75,
