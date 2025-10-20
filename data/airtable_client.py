@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - optional dependency
     Table = None  # type: ignore
 
 
-def _get_table(table_name: str) -> Optional["Table"]:
+def _get_table(table_name: str) -> Optional[Any]:
     api_key = os.getenv("AIRTABLE_API_KEY")
     base_id = os.getenv("AIRTABLE_BASE_ID")
     if not Table or not api_key or not base_id:

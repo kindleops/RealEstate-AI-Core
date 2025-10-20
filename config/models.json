@@ -1,18 +1,28 @@
 {
   "cloud": {
     "providers": [
-      {"name": "gpt-4o", "weight": 0.5},
-      {"name": "claude-3-opus", "weight": 0.5}
+      { "name": "gpt-4o", "weight": 0.5 },
+      { "name": "claude-3-opus", "weight": 0.5 }
     ]
   },
   "local": {
     "providers": [
-      {"name": "phi3:mini", "weight": 0.7},
-      {"name": "mistral-7b", "weight": 0.3}
-    ]
+      { "name": "phi3:mini", "weight": 0.7 },
+      { "name": "mistral-7b", "weight": 0.3 }
+    ],
+    "endpoints": {
+      "mistral-7b": "http://localhost:11434/api/generate",
+      "phi3:mini": "http://localhost:11434/api/generate",
+      "gemma:2b": "http://localhost:11434/api/generate"
+    }
   },
   "routing": {
     "cloud_ratio": 0.4,
     "local_ratio": 0.6
-  }
+  },
+  "default": "mistral:7b",
+  "summarize": "gemma:2b",
+  "classify": "phi3:mini",
+  "extract": "mistral-7b",
+  "generate_response": "mistral-7b"
 }
