@@ -1,103 +1,241 @@
-"""Agent that scores property records based on configurable weights."""
+"""Agent that scores Airtable property records using a local Ollama model."""
 from __future__ import annotations
 
-import json
+import re
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
+import requests
+
+from data.airtable_client import get_properties, update_property
+from data.logger import append_score_log
 from logger import get_logger
 
 LOGGER = get_logger()
 
-WEIGHTS_PATH = Path("config/weights.json")
+PROMPT_TEMPLATE = (
+    "You are an AI analyst for a wholesale real estate company.\n"
+    "Evaluate the following property based on its potential motivation and distress level for a quick cash sale.\n\n"
+    "Analyze:\n"
+    "- Property details (year built, beds, baths, sqft, type, location)\n"
+    "- Ownership and situation (vacant, absentee, inherited, tax delinquent, preforeclosure)\n"
+    "- Market context (recent sales, price trends, demand in ZIP)\n"
+    "- Visible distress indicators (repairs needed, liens, age of home, long ownership)\n"
+    "- Online listings and sale history from Zillow, Realtor, Propwire, and general market knowledge\n\n"
+    "Scoring rules:\n"
+    "1. If sold within the last 24 months → score = 0\n"
+    "2. Otherwise, assign a score 1–100 (90–100 = very motivated, 70–89 = likely motivated, "
+    "40–69 = mild, 1–39 = low)\n"
+    "Return only the numeric score, nothing else.\n\n"
+    "Property data:\n"
+    "{property_data}\n"
+)
 
 
-@dataclass
+@dataclass(slots=True)
 class ScoreAgentConfig:
-    weights_path: Path = WEIGHTS_PATH
+    """Runtime options for the score agent."""
+
+    table_name: str = "Properties"
+    target_field: str = "Motivation Score"
+    model: str = "mistral:7b"
+    ollama_url: str = "http://localhost:11434/api/generate"
+    request_timeout: int = 120
+    key_fields: Sequence[str] = (
+        "Address",
+        "City",
+        "State",
+        "Zip",
+        "Year Built",
+        "Beds",
+        "Baths",
+        "Square Feet",
+        "Lot Size",
+        "Property Type",
+        "Vacancy",
+        "Owner Type",
+        "Ownership Length",
+        "Preforeclosure",
+        "Tax Delinquent",
+        "Liens",
+        "Auction Date",
+        "Last Sold Date",
+        "Last Sale Price",
+    )
+    sale_date_fields: Sequence[str] = ("Last Sold Date", "Last Sale Date", "last_sold_date")
+    max_records: Optional[int] = None
+
+
+@dataclass(slots=True)
+class ScoreResult:
+    """Outcome of processing a single Airtable record."""
+
+    record_id: str
+    score: Optional[int]
+    status: str
+    error: Optional[str] = None
 
 
 class ScoreAgent:
-    """Compute motivation score and tag for a property."""
+    """Fetch property records, score them with an LLM, and persist results."""
 
-    def __init__(self, config: ScoreAgentConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: ScoreAgentConfig | None = None,
+        fetch_records: Callable[[str], Iterable[Dict[str, Any]]] = get_properties,
+        update_record: Callable[[str, Dict[str, Any], str], Dict[str, Any]] = update_property,
+    ) -> None:
         self.config = config or ScoreAgentConfig()
-        self.weights = self._load_weights()
+        self._fetch_records = fetch_records
+        self._update_record = update_record
 
-    def _load_weights(self) -> Dict[str, Any]:
-        if not self.config.weights_path.exists():
-            LOGGER.warning("Weights file missing at %s", self.config.weights_path)
-            return {"base_score": 0, "fields": {}, "motivation_thresholds": {}}
-        with self.config.weights_path.open("r", encoding="utf-8") as fh:
-            return json.load(fh)
+    def score_all(self, limit: int | None = None) -> List[ScoreResult]:
+        """Process all properties sequentially and return per-record results."""
+        effective_limit = limit if limit is not None else self.config.max_records
+        results: List[ScoreResult] = []
+        for index, record in enumerate(self._iter_records(), start=1):
+            if effective_limit is not None and index > effective_limit:
+                break
+            result = self._process_record(record)
+            results.append(result)
+        LOGGER.info("ScoreAgent completed %s records", len(results))
+        return results
 
-    def _save_weights(self) -> None:
-        with self.config.weights_path.open("w", encoding="utf-8") as fh:
-            json.dump(self.weights, fh, indent=2)
+    def _iter_records(self) -> Iterable[Dict[str, Any]]:
+        try:
+            records = list(self._fetch_records(self.config.table_name))
+        except TypeError:
+            # Backwards compatibility for helper without table argument.
+            records = list(self._fetch_records())  # type: ignore[arg-type]
+        if not records:
+            LOGGER.warning("No properties returned from Airtable table %s", self.config.table_name)
+        return records
 
-    def score(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        score = float(self.weights.get("base_score", 0))
-        details: Dict[str, float] = {}
-        fields = self.weights.get("fields", {})
+    def _process_record(self, record: Dict[str, Any]) -> ScoreResult:
+        record_id = record.get("id") or ""
+        fields: Dict[str, Any] = record.get("fields", {})
+        if not record_id:
+            LOGGER.error("Skipping record missing Airtable id: %s", record)
+            return ScoreResult(record_id="", score=None, status="skipped", error="missing_record_id")
 
-        for key, value in fields.items():
-            contribution = self._evaluate_field(key, value, payload)
-            if contribution:
-                details[key] = contribution
-                score += contribution
+        try:
+            if self._sold_within_24_months(fields):
+                score = 0
+                LOGGER.info("Property %s sold within 24 months; forcing score 0", record_id)
+            else:
+                prompt = self._build_prompt(fields)
+                score = self._invoke_model(prompt)
+            self._persist_score(record_id, score)
+            message = f"score={score}"
+            LOGGER.info("Updated Airtable record %s with %s", record_id, message)
+            append_score_log(record_id=record_id, score=score, payload=fields, status="success")
+            return ScoreResult(record_id=record_id, score=score, status="success")
+        except Exception as exc:
+            error_text = str(exc)
+            LOGGER.exception("Failed to score record %s: %s", record_id, error_text)
+            append_score_log(record_id=record_id, score=None, payload=fields, status="error", error=error_text)
+            return ScoreResult(record_id=record_id, score=None, status="error", error=error_text)
 
-        score = max(0, min(100, score))
-        motivation = self._label(score)
-        return {"score": round(score, 2), "motivation": motivation, "contributions": details}
+    def _build_prompt(self, fields: Dict[str, Any]) -> str:
+        property_data = self._format_fields(fields)
+        return PROMPT_TEMPLATE.format(property_data=property_data)
 
-    def _evaluate_field(self, key: str, rule: Any, payload: Dict[str, Any]) -> float:
-        value = payload.get(key)
-        if isinstance(rule, (int, float)):
-            if isinstance(value, bool) and value:
-                return float(rule)
-            if isinstance(value, (int, float)) and value:
-                return float(rule)
-            if isinstance(value, str) and value.lower() in {"yes", "true"}:
-                return float(rule)
-            return 0.0
+    def _invoke_model(self, prompt: str) -> int:
+        payload = {"model": self.config.model, "prompt": prompt, "stream": False}
+        response = requests.post(
+            self.config.ollama_url,
+            json=payload,
+            timeout=self.config.request_timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict):
+            text_response = data.get("response")
+            if not text_response and "error" in data:
+                raise RuntimeError(f"Ollama error: {data['error']}")
+        else:
+            raise RuntimeError("Unexpected Ollama response type")
+        score = self._parse_score(text_response or "")
+        return score
 
-        if isinstance(rule, dict):
-            if "thresholds" in rule:
-                return self._evaluate_thresholds(rule["thresholds"], value)
-        return 0.0
+    def _parse_score(self, text: str) -> int:
+        matches = re.findall(r"\d{1,3}", text)
+        if not matches:
+            raise ValueError(f"Unable to parse numeric score from: {text!r}")
+        for value in matches:
+            score = int(value)
+            if 0 <= score <= 100:
+                return score
+        raise ValueError(f"No valid score (0-100) found in: {text!r}")
+
+    def _persist_score(self, record_id: str, score: int) -> None:
+        fields = {self.config.target_field: score}
+        self._update_record(record_id, fields, self.config.table_name)
+
+    def _format_fields(self, fields: Dict[str, Any]) -> str:
+        ordered_lines: List[str] = []
+        seen = set()
+        for key in self.config.key_fields:
+            if key in fields:
+                ordered_lines.append(f"{key}: {self._stringify(fields[key])}")
+                seen.add(key)
+        for key in sorted(k for k in fields.keys() if k not in seen):
+            value = fields[key]
+            if value is not None and value != "":
+                ordered_lines.append(f"{key}: {self._stringify(value)}")
+        if not ordered_lines:
+            return "No property fields provided."
+        return "\n".join(ordered_lines)
 
     @staticmethod
-    def _evaluate_thresholds(thresholds: list[Dict[str, Any]], value: Any) -> float:
-        if value is None:
-            return 0.0
-        try:
-            numeric_value = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-        best_score = 0.0
-        for threshold in thresholds:
-            min_value = threshold.get("min")
-            max_days = threshold.get("max_days")
-            if min_value is not None and numeric_value >= float(min_value):
-                best_score = max(best_score, float(threshold.get("score", 0)))
-            if max_days is not None and numeric_value <= float(max_days):
-                best_score = max(best_score, float(threshold.get("score", 0)))
-        return best_score
+    def _stringify(value: Any) -> str:
+        if isinstance(value, (list, tuple)):
+            return ", ".join(str(item) for item in value if item not in (None, ""))
+        if isinstance(value, dict):
+            return ", ".join(f"{k}: {v}" for k, v in value.items())
+        return str(value)
 
-    def _label(self, score: float) -> str:
-        thresholds = self.weights.get("motivation_thresholds", {})
-        high = thresholds.get("high", 75)
-        medium = thresholds.get("medium", 45)
-        if score >= high:
-            return "high"
-        if score >= medium:
-            return "medium"
-        return "low"
+    def _sold_within_24_months(self, fields: Dict[str, Any]) -> bool:
+        sale_date = self._extract_sale_date(fields)
+        if not sale_date:
+            return False
+        delta = datetime.utcnow() - sale_date
+        return delta.days <= 730
 
-    def update_weights(self, updates: Dict[str, Any]) -> None:
-        self.weights.update(updates)
-        self._save_weights()
+    def _extract_sale_date(self, fields: Dict[str, Any]) -> Optional[datetime]:
+        for key in self.config.sale_date_fields:
+            raw_value = fields.get(key)
+            if not raw_value:
+                continue
+            parsed = self._parse_date(raw_value)
+            if parsed:
+                return parsed
+        return None
+
+    @staticmethod
+    def _parse_date(value: Any) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            return value
+        if hasattr(value, "isoformat"):
+            try:
+                return datetime.fromisoformat(value.isoformat())
+            except (TypeError, ValueError):
+                return None
+        if isinstance(value, str):
+            formats = ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d")
+            for fmt in formats:
+                try:
+                    return datetime.strptime(value[:10], fmt)
+                except ValueError:
+                    continue
+        return None
 
 
-__all__ = ["ScoreAgent", "ScoreAgentConfig"]
+def main(limit: int | None = None) -> List[ScoreResult]:
+    """Entry point for batch scoring, suitable for FastAPI wiring."""
+    agent = ScoreAgent()
+    return agent.score_all(limit=limit)
+
+
+__all__ = ["ScoreAgent", "ScoreAgentConfig", "ScoreResult", "main"]
