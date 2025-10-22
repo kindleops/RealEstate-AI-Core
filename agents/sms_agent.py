@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from data.airtable_client import AirtableError, get_records, update_record
+from data.airtable_schema import CONVERSATIONS_TABLE, ConversationStatus
 from data.logger import log_agent_event, log_batch_summary
 from logger import get_logger
 from utils.model_selector import ModelChoice, ModelSelector
@@ -19,13 +20,14 @@ class SMSAgentConfig:
     opt_out_keywords: tuple[str, ...] = ("stop", "unsubscribe", "remove", "opt out")
     gratitude_keywords: tuple[str, ...] = ("thanks", "thank you", "appreciate")
     anger_keywords: tuple[str, ...] = ("angry", "mad", "upset", "annoyed")
-    table_name: str = "Conversations"
-    incoming_field: str = "Incoming Message"
-    outgoing_field: str = "Last Message"
-    contact_field: str = "Contact Name"
-    status_field: str = "Status"
-    ready_status: str = "Ready"
-    completed_status: str = "Responded"
+    table_name: str = CONVERSATIONS_TABLE.name()
+    incoming_field: str = CONVERSATIONS_TABLE.field_name("MESSAGE")
+    outgoing_field: str = CONVERSATIONS_TABLE.field_name("LAST_MESSAGE")
+    contact_field: str = CONVERSATIONS_TABLE.field_name("CONTACT_NAME")
+    status_field: str = CONVERSATIONS_TABLE.field_name("STATUS")
+    ready_status: str = ConversationStatus.READY.value
+    completed_status: str = ConversationStatus.RESPONDED.value
+    opt_out_status: str = ConversationStatus.OPT_OUT.value
     model_name: str = "mistral:7b"
     ollama_url: str = "http://localhost:11434/api/generate"
     request_timeout: int = 60
@@ -126,7 +128,9 @@ class SMSAgent:
 
         reply_payload = self.generate_reply(payload)
         reply_text = reply_payload.get("reply")
-        status_value = self.config.completed_status if not reply_payload.get("opt_out") else "Opt Out"
+        status_value = (
+            self.config.completed_status if not reply_payload.get("opt_out") else self.config.opt_out_status
+        )
 
         try:
             update_record(

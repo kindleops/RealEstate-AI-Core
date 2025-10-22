@@ -8,6 +8,7 @@ from statistics import mean
 from typing import Any, Dict, List, Optional, Sequence
 
 from data.airtable_client import AirtableError, create_record, get_records
+from data.airtable_schema import MODEL_LOGS_TABLE, PROPERTIES_TABLE, PropertyDealStatus
 from data.logger import log_agent_event
 from logger import get_logger
 from utils.model_selector import ModelSelector
@@ -18,11 +19,14 @@ LOGGER = get_logger()
 @dataclass
 class TrainerAgentConfig:
     weights_path: Path = Path("config/weights.json")
-    properties_table: str = "Properties"
-    model_log_table: str = "Model Logs"
-    motivation_field: str = "Motivation Score"
-    status_field: str = "Deal Status"
-    closed_statuses: Sequence[str] = ("Closed", "Sold")
+    properties_table: str = PROPERTIES_TABLE.name()
+    model_log_table: str = MODEL_LOGS_TABLE.name()
+    motivation_field: str = PROPERTIES_TABLE.field_name("MOTIVATION_SCORE")
+    status_field: str = PROPERTIES_TABLE.field_name("DEAL_STATUS")
+    closed_statuses: Sequence[str] = (
+        PropertyDealStatus.CLOSED.value,
+        PropertyDealStatus.SOLD.value,
+    )
     learning_rate: float = 0.05
 
 
@@ -143,15 +147,13 @@ class TrainerAgent:
             f"overall avg={avg_score:.2f}."
         )
         try:
-            create_record(
-                self.config.model_log_table,
-                {
-                    "Agent": "trainer_agent",
-                    "Summary": summary,
-                    "Before": json.dumps(before.get("score_agent", {})),
-                    "After": json.dumps(after.get("score_agent", {})),
-                },
-            )
+            fields = {
+                MODEL_LOGS_TABLE.field_name("AGENT"): "trainer_agent",
+                MODEL_LOGS_TABLE.field_name("SUMMARY"): summary,
+                MODEL_LOGS_TABLE.field_name("BEFORE"): json.dumps(before.get("score_agent", {})),
+                MODEL_LOGS_TABLE.field_name("AFTER"): json.dumps(after.get("score_agent", {})),
+            }
+            create_record(self.config.model_log_table, fields)
         except AirtableError as exc:
             LOGGER.exception("Failed to log model adjustment: %s", exc)
 

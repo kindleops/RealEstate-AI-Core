@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import requests
 
 from data.airtable_client import AirtableError, get_records, update_record
+from data.airtable_schema import PROPERTIES_TABLE
 from data.logger import append_score_log, log_batch_summary
 from logger import get_logger
 
@@ -32,37 +33,44 @@ PROMPT_TEMPLATE = (
 )
 
 
+_KEY_FIELD_KEYS: Sequence[str] = (
+    "ADDRESS",
+    "CITY",
+    "STATE",
+    "ZIP",
+    "YEAR_BUILT",
+    "BEDS",
+    "BATHS",
+    "SQUARE_FEET",
+    "LOT_SIZE",
+    "PROPERTY_TYPE",
+    "VACANCY",
+    "OWNER_TYPE",
+    "OWNERSHIP_LENGTH",
+    "PREFORECLOSURE",
+    "TAX_DELINQUENT",
+    "LIENS",
+    "AUCTION_DATE",
+    "LAST_SOLD_DATE",
+    "LAST_SALE_PRICE",
+    "ESTIMATED_REPAIRS",
+    "ARV",
+)
+
+_SALE_DATE_FIELD_KEYS: Sequence[str] = ("LAST_SOLD_DATE", "LAST_SALE_DATE")
+
+
 @dataclass(slots=True)
 class ScoreAgentConfig:
     """Runtime options for the score agent."""
 
-    table_name: str = "Properties"
-    target_field: str = "Motivation Score"
+    table_name: str = PROPERTIES_TABLE.name()
+    target_field: str = PROPERTIES_TABLE.field_name("MOTIVATION_SCORE")
     model: str = "mistral:7b"
     ollama_url: str = "http://localhost:11434/api/generate"
     request_timeout: int = 120
-    key_fields: Sequence[str] = (
-        "Address",
-        "City",
-        "State",
-        "Zip",
-        "Year Built",
-        "Beds",
-        "Baths",
-        "Square Feet",
-        "Lot Size",
-        "Property Type",
-        "Vacancy",
-        "Owner Type",
-        "Ownership Length",
-        "Preforeclosure",
-        "Tax Delinquent",
-        "Liens",
-        "Auction Date",
-        "Last Sold Date",
-        "Last Sale Price",
-    )
-    sale_date_fields: Sequence[str] = ("Last Sold Date", "Last Sale Date", "last_sold_date")
+    key_fields: Sequence[str] = tuple(PROPERTIES_TABLE.field_name(key) for key in _KEY_FIELD_KEYS)
+    sale_date_fields: Sequence[str] = tuple(PROPERTIES_TABLE.field_name(key) for key in _SALE_DATE_FIELD_KEYS)
     max_records: Optional[int] = None
 
 
@@ -105,7 +113,8 @@ class ScoreAgent:
         return results
 
     def _iter_records(self) -> List[Dict[str, Any]]:
-        filter_formula = "OR({Motivation Score} = '', {Motivation Score} = BLANK())"
+        motivation_field = self.config.target_field
+        filter_formula = f"OR({motivation_field} = '', {motivation_field} = BLANK())"
         try:
             records = self._fetch_records(
                 self.config.table_name,

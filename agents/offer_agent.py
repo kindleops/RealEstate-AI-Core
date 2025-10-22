@@ -9,6 +9,7 @@ import requests
 
 from agents.comps_agent import CompsAgent
 from data.airtable_client import AirtableError, get_records, update_record
+from data.airtable_schema import PROPERTIES_TABLE
 from data.logger import log_agent_event, log_batch_summary
 from logger import get_logger
 
@@ -18,12 +19,12 @@ LOGGER = get_logger()
 @dataclass
 class OfferAgentConfig:
     default_margin: float = 0.7
-    table_name: str = "Properties"
-    motivation_field: str = "Motivation Score"
-    arv_field: str = "ARV"
-    repairs_field: str = "Estimated Repairs"
-    offer_field: str = "Suggested Offer"
-    offer_type_field: str = "Offer Type"
+    table_name: str = PROPERTIES_TABLE.name()
+    motivation_field: str = PROPERTIES_TABLE.field_name("MOTIVATION_SCORE")
+    arv_field: str = PROPERTIES_TABLE.field_name("ARV")
+    repairs_field: str = PROPERTIES_TABLE.field_name("ESTIMATED_REPAIRS")
+    offer_field: str = PROPERTIES_TABLE.field_name("SUGGESTED_OFFER")
+    offer_type_field: str = PROPERTIES_TABLE.field_name("OFFER_TYPE")
     motivation_threshold: int = 70
     ollama_url: str = "http://localhost:11434/api/generate"
     model_name: str = "mistral:7b"
@@ -137,12 +138,17 @@ class OfferAgent:
         )
 
     def _build_payload(self, fields: Dict[str, Any]) -> Dict[str, Any]:
+        address_field = PROPERTIES_TABLE.field_name("ADDRESS")
+        zip_field = PROPERTIES_TABLE.field_name("ZIP")
+        beds_field = PROPERTIES_TABLE.field_name("BEDS")
+        baths_field = PROPERTIES_TABLE.field_name("BATHS")
+        sqft_field = PROPERTIES_TABLE.field_name("SQUARE_FEET")
         return {
-            "address": fields.get("Address"),
-            "zip": fields.get("Zip"),
-            "beds": fields.get("Beds"),
-            "baths": fields.get("Baths"),
-            "sqft": fields.get("Square Feet"),
+            "address": fields.get(address_field),
+            "zip": fields.get(zip_field),
+            "beds": fields.get(beds_field),
+            "baths": fields.get(baths_field),
+            "sqft": fields.get(sqft_field),
             "arv": fields.get(self.config.arv_field),
             "repairs": fields.get(self.config.repairs_field),
             "motivation": fields.get(self.config.motivation_field),
