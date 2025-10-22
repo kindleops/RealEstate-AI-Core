@@ -1,8 +1,31 @@
 {
-  "motivation": 0.35,
-  "equity": 0.25,
-  "timeline": 0.2,
-  "communication": 0.2
+  "score_agent": {
+    "base_score": 0,
+    "motivation_thresholds": {
+      "high": 75,
+      "medium": 45
+    },
+    "fields": {
+      "vacant": 30,
+      "tax_delinquent": 20,
+      "preforeclosure": 25,
+      "equity_percentage": {
+        "thresholds": [
+          {"min": 50, "score": 20},
+          {"min": 30, "score": 10}
+        ]
+      },
+      "absentee_owner": 10,
+      "recent_communication": {
+        "thresholds": [
+          {"max_days": 7, "score": 15},
+          {"max_days": 30, "score": 5}
+        ]
+      },
+      "tax_lien": 15,
+      "code_violation": 10
+    }
+  },
   "inbound_leads": {
     "base_score": 55,
     "urgency_weight": 6,
@@ -57,46 +80,5 @@
       "heavy": 1.45
     },
     "contingency_default": 0.1
-  "weights": {
-    "not_sold_24_months": 15,
-    "high_equity": 10,
-    "cash_sales": 15,
-    "vacant": 10,
-    "absentee_owner": 10,
-    "flip_activity": 15,
-    "margin": 20
-  },
-  "thresholds": {
-    "recent_sale_months": 24,
-    "equity_percent": 0.4,
-    "cash_sales_minimum": 15,
-    "flip_activity_minimum": 15,
-    "margin_ratio": 0.3,
-    "high_priority_cutoff": 70,
-    "medium_priority_cutoff": 40
-  "base_score": 0,
-  "motivation_thresholds": {
-    "high": 75,
-    "medium": 45
-  },
-  "fields": {
-    "vacant": 30,
-    "tax_delinquent": 20,
-    "preforeclosure": 25,
-    "equity_percentage": {
-      "thresholds": [
-        {"min": 50, "score": 20},
-        {"min": 30, "score": 10}
-      ]
-    },
-    "absentee_owner": 10,
-    "recent_communication": {
-      "thresholds": [
-        {"max_days": 7, "score": 15},
-        {"max_days": 30, "score": 5}
-      ]
-    },
-    "tax_lien": 15,
-    "code_violation": 10
   }
 }

@@ -1,161 +1,178 @@
-"""Simplified Airtable client used by the automation agents.
-
-The real platform integrates with Airtable's REST API.  For the purposes of
-this codebase we provide a light-weight local persistence layer that mimics
-the behaviour of the remote API.  Data is stored in ``data/airtable.json`` and
-is safe to use in offline development environments and unit tests.
-"""
-
-from __future__ import annotations
-
-import json
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Iterable, List, Optional
-
-
-DEFAULT_DB_PATH = Path("data/airtable.json")
-
-
-@dataclass
-class Contact:
-    """Representation of a single lead/contact entry."""
-
-    contact_id: str
-    name: str
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    zipcode: Optional[str] = None
-    status: str = "new"
-    score: Optional[float] = None
-    metadata: Dict[str, str] = field(default_factory=dict)
-
-
-class AirtableClient:
-    """Tiny persistence layer to emulate Airtable operations."""
-
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH) -> None:
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.db_path.exists():
-            self._write({"contacts": [], "interactions": []})
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    def _read(self) -> Dict[str, List[Dict[str, str]]]:
-        with self.db_path.open("r", encoding="utf-8") as fh:
-            return json.load(fh)
-
-    def _write(self, payload: Dict[str, List[Dict[str, str]]]) -> None:
-        with self.db_path.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=2)
-
-    # ------------------------------------------------------------------
-    # Public API
-    def upsert_contact(self, contact: Contact) -> None:
-        payload = self._read()
-        contacts = payload.setdefault("contacts", [])
-        for idx, record in enumerate(contacts):
-            if record["contact_id"] == contact.contact_id:
-                contacts[idx] = contact.__dict__
-                self._write(payload)
-                return
-        contacts.append(contact.__dict__)
-        self._write(payload)
-
-    def fetch_contacts(
-        self, *, statuses: Optional[Iterable[str]] = None, limit: Optional[int] = None
-    ) -> List[Contact]:
-        payload = self._read()
-        contacts = [Contact(**record) for record in payload.get("contacts", [])]
-        if statuses:
-            statuses = {status.lower() for status in statuses}
-            contacts = [c for c in contacts if c.status.lower() in statuses]
-        if limit is not None:
-            contacts = contacts[:limit]
-        return contacts
-
-    def log_interaction(
-        self, contact_id: str, interaction_type: str, details: Dict[str, str]
-    ) -> None:
-        payload = self._read()
-        interactions = payload.setdefault("interactions", [])
-        details = details.copy()
-        details.setdefault("timestamp", datetime.utcnow().isoformat() + "Z")
-        interactions.append(
-            {
-                "contact_id": contact_id,
-                "type": interaction_type,
-                "details": details,
-            }
-        )
-        self._write(payload)
-
-    def recent_interactions(self, contact_id: str, limit: int = 10) -> List[Dict[str, str]]:
-        payload = self._read()
-        interactions = [
-            interaction
-            for interaction in payload.get("interactions", [])
-            if interaction["contact_id"] == contact_id
-        ]
-        return interactions[-limit:]
-
-
-__all__ = ["AirtableClient", "Contact"]
-
-"""Wrapper around pyairtable for property data access."""
+"""Universal Airtable REST client shared across agents."""
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterable, Optional
+import time
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import quote
 
+import requests
+
+from config.env import load_env
 from logger import get_logger
 
 LOGGER = get_logger()
 
-try:
-    from pyairtable import Table
-except ImportError:  # pragma: no cover - optional dependency
-    Table = None  # type: ignore
+load_env()
+
+API_KEY = os.getenv("AIRTABLE_API_KEY")
+BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+API_BASE_URL = "https://api.airtable.com/v0"
+
+MAX_RETRIES = 5
+BACKOFF_SECONDS = 2.0
+PAGE_SIZE = 100
 
 
-def _get_table(table_name: str) -> Optional[Any]:
-    api_key = os.getenv("AIRTABLE_API_KEY")
-    base_id = os.getenv("AIRTABLE_BASE_ID")
-    if not Table or not api_key or not base_id:
-        LOGGER.warning("pyairtable not configured; returning None for table %s", table_name)
-        return None
-    return Table(api_key, base_id, table_name)
+class AirtableError(RuntimeError):
+    """Raised when the Airtable API returns an error response."""
 
 
-def get_properties(table_name: str = "Properties") -> Iterable[Dict[str, Any]]:
-    table = _get_table(table_name)
-    if not table:
-        return []
-    return table.all()
+class AirtableAuthenticationError(AirtableError):
+    """Raised when Airtable credentials are missing or invalid."""
 
 
-def update_property(record_id: str, fields: Dict[str, Any], table_name: str = "Properties") -> Dict[str, Any]:
-    table = _get_table(table_name)
-    if not table:
-        LOGGER.warning("Cannot update property %s; pyairtable unavailable", record_id)
-        return {"id": record_id, "fields": fields}
-    return table.update(record_id, fields)
-
-
-def append_log(agent: str, input_payload: Dict[str, Any], output_payload: Dict[str, Any], table_name: str = "Agent Logs") -> Dict[str, Any]:
-    table = _get_table(table_name)
-    record = {
-        "Agent": agent,
-        "Input": str(input_payload),
-        "Output": str(output_payload),
+def _headers() -> Dict[str, str]:
+    if not API_KEY or not BASE_ID:
+        raise AirtableAuthenticationError(
+            "AIRTABLE_API_KEY and AIRTABLE_BASE_ID must be set in the environment."
+        )
+    return {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
     }
-    if not table:
-        LOGGER.warning("pyairtable unavailable; returning log stub")
-        record["status"] = "stub"
-        return record
-    return table.create(record)
 
 
-__all__ = ["get_properties", "update_property", "append_log"]
+def _url(table_name: str, suffix: str = "") -> str:
+    encoded = quote(table_name, safe="")
+    if suffix:
+        return f"{API_BASE_URL}/{BASE_ID}/{encoded}/{suffix}"
+    return f"{API_BASE_URL}/{BASE_ID}/{encoded}"
+
+
+def _request(
+    method: str,
+    table_name: str,
+    record_id: str | None = None,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    url = _url(table_name, record_id) if record_id else _url(table_name)
+    headers = _headers()
+    attempt = 0
+    while attempt < MAX_RETRIES:
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=payload,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            attempt += 1
+            LOGGER.warning("Airtable request error (%s attempt %s/%s): %s", method, attempt, MAX_RETRIES, exc)
+            time.sleep(BACKOFF_SECONDS * attempt)
+            continue
+
+        if response.status_code == 429:
+            retry_after = float(response.headers.get("Retry-After", BACKOFF_SECONDS))
+            LOGGER.info("Airtable rate limit hit; sleeping for %.1fs", retry_after)
+            time.sleep(retry_after)
+            attempt += 1
+            continue
+
+        if 500 <= response.status_code < 600:
+            attempt += 1
+            LOGGER.warning(
+                "Airtable server error %s on %s attempt %s/%s",
+                response.status_code,
+                method,
+                attempt,
+                MAX_RETRIES,
+            )
+            time.sleep(BACKOFF_SECONDS * attempt)
+            continue
+
+        if 200 <= response.status_code < 300:
+            return response.json()
+
+        raise AirtableError(
+            f"Airtable responded with {response.status_code}: {response.text}"
+        )
+
+    raise AirtableError("Exceeded retry budget for Airtable request")
+
+
+def get_records(
+    table_name: str,
+    view: str | None = None,
+    filter_formula: str | None = None,
+    fields: Optional[Iterable[str]] = None,
+    page_size: int = PAGE_SIZE,
+) -> List[Dict[str, Any]]:
+    """Retrieve all records from a table with optional view or filter."""
+    params: Dict[str, Any] = {"pageSize": page_size}
+    if view:
+        params["view"] = view
+    if filter_formula:
+        params["filterByFormula"] = filter_formula
+    if fields:
+        params["fields[]"] = list(fields)
+
+    records: List[Dict[str, Any]] = []
+    offset: Optional[str] = None
+
+    while True:
+        loop_params = params.copy()
+        if offset:
+            loop_params["offset"] = offset
+        response = _request("GET", table_name, params=loop_params)
+        records.extend(response.get("records", []))
+        offset = response.get("offset")
+        if not offset:
+            break
+    LOGGER.info("Fetched %s records from Airtable table %s", len(records), table_name)
+    return records
+
+
+def update_record(table_name: str, record_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Update a single record in Airtable."""
+    payload = {"fields": fields}
+    response = _request("PATCH", table_name, record_id, payload=payload)
+    LOGGER.info("Updated Airtable record %s.%s", table_name, record_id)
+    return response
+
+
+def create_record(table_name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new Airtable record."""
+    payload = {"fields": fields}
+    response = _request("POST", table_name, payload=payload)
+    LOGGER.info("Created Airtable record in %s", table_name)
+    return response
+
+
+def batch_update(table_name: str, updates: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Batch update records with chunking to respect Airtable limits."""
+    results: List[Dict[str, Any]] = []
+    chunk: List[Dict[str, Any]] = []
+    for update in updates:
+        chunk.append(update)
+        if len(chunk) == 10:
+            results.extend(_dispatch_batch(table_name, chunk))
+            chunk = []
+    if chunk:
+        results.extend(_dispatch_batch(table_name, chunk))
+    LOGGER.info("Batch updated %s records in %s", len(results), table_name)
+    return results
+
+
+def _dispatch_batch(table_name: str, chunk: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    payload = {"records": chunk}
+    response = _request("PATCH", table_name, payload=payload)
+    return response.get("records", [])
+
+
+__all__ = ["get_records", "update_record", "create_record", "batch_update", "AirtableError", "AirtableAuthenticationError"]
