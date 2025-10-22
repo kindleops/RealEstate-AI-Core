@@ -1,5 +1,6 @@
 # Ignore everything by default
 *
+.env
 
 # But keep these files/folders
 !.gitignore
